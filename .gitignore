@@ -1,0 +1,25 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtuelt miljø
+venv/
+.env/
+
+# Modellfiler (YOLOv8)
+*.pt
+yolov8n.pt
+
+# Loggfiler og midlertidige filer
+*.log
+*.tmp
+
+# macOS systemfiler
+.DS_Store
+
+# VS Code-konfig (hvis du bruker det)
+.vscode/
+
+# YOLOv8 trenings- og output-mappe
+runs/
