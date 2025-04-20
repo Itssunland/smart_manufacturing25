@@ -1,16 +1,14 @@
 import cv2
-from ultralytics import YOLO
-import logging
 import time
+import logging
+from transformers import pipeline
 from paho.mqtt import client as mqtt_client
 
-#TODO: Glasses detection unstable.
-
-# ==== MQTT SETUP ====
+# ==== MQTT CONFIGURATION ====
 broker = 'broker.emqx.io'
 port = 1883
 topic = "camera/glasses"
-client_id = f'publisher-glasses'
+client_id = 'publisher-glasses'
 
 def connect_mqtt():
     def on_connect(client, userdata, flags, rc, properties=None):
@@ -24,91 +22,78 @@ def connect_mqtt():
     client.connect(broker, port)
     return client
 
-client = connect_mqtt()
-client.loop_start()
+# ==== MAIN PROGRAM ====
+def main():
+    logging.getLogger("transformers").setLevel(logging.ERROR)
 
-# ==== DETEKSJON SETUP ====
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-model = YOLO("yolov8n.pt")
-model.verbose = False
-logging.getLogger("ultralytics").setLevel(logging.ERROR)
+    # === HuggingFace eyeglasses detection model ===
+    pipe = pipeline("image-classification", model="youngp5/eyeglasses_detection")
 
-# Bruk mobilkamera (via Camo eller IP-kamera) – endre om nødvendig
-cap = cv2.VideoCapture(0)  # Bruk 0 for innebygd, 1 for ekstern, eller IP-stream
+    # === Optional: load YOLO for later use ===
+    # from ultralytics import YOLO
+    # yolo_model = YOLO("glasses-detection-model.pt") #NOT A REAL MODEL.
+    # yolo_model.verbose = False
 
-frame_counter = 0
-glasses_counter = 0
-decision_made = False
-final_label = ""
+    # === Optional: Haar cascade for face detection (still used for annotation)
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        print("No frame from camera")
-        break
+    client = connect_mqtt()
+    client.loop_start()
 
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("❌ Could not access camera.")
+        return
 
-    results = model(frame)
-    detections = results[0].boxes
-    glasses_detected = False
+    label = "Analyzing..."
+    score = 0.0
+    last_check = 0
+    interval = 1  # seconds between classifications
 
-    for box in detections:
-        cls = int(box.cls[0])
-        label = model.names[cls]
-        conf = float(box.conf[0])
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("No frame received.")
+            break
 
-        if label in ["glasses", "sunglasses"]:
-            glasses_detected = True
-            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame, f"{label} ({conf:.2f})", (x1, y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        current_time = time.time()
+        if current_time - last_check > interval:
+            cv2.imwrite("temp.jpg", frame)
+            result = pipe("temp.jpg")[0]
+            raw_label = result['label']
+            score = result['score']
+            print(f"📷 Detected: {raw_label} ({score:.2f})")
 
-    if not decision_made and len(faces) > 0:
-        frame_counter += 1
-        if glasses_detected:
-            glasses_counter += 1
+            label = "Glasses 👓" if raw_label == "eyeglasses" and score > 0.5 else "No Glasses 🚫"
+            client.publish(topic, label)
+            last_check = current_time
 
-        label = f"Analyzing... ({frame_counter}/30)"
-        color = (0, 255, 255)
+        # Optional face box (cosmetic only)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+        if len(faces) > 0:
+            (x, y, w, h) = faces[0]
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-        if frame_counter >= 30:
-            ratio = glasses_counter / frame_counter
-            final_label = "Glasses 👓" if ratio > 0.3 else "No Glasses 🚫"
-            print(f"Finished: {glasses_counter} / {frame_counter} = {ratio}")
-            print("Final label:", final_label)
+        # Draw result
+        cv2.putText(frame, f"{label} ({score:.2f})", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-            # ✅ Send til MQTT
-            client.publish(topic, final_label)
-            decision_made = True
+        cv2.imshow("Eyeglasses Detection (HuggingFace)", frame)
 
-    elif decision_made:
-        label = final_label
-        color = (0, 255, 0)
-    else:
-        label = "No face detected"
-        color = (0, 0, 255)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord("q"):
+            break
+        elif key == ord("r"):
+            label = "Analyzing..."
+            score = 0.0
+            last_check = 0
 
-    if len(faces) > 0:
-        (x, y, w, h) = faces[0]
-        cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-        cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-    else:
-        cv2.putText(frame, label, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+    cap.release()
+    cv2.destroyAllWindows()
+    client.loop_stop()
+    client.disconnect()
+    print("🛑 Program terminated.")
 
-    cv2.imshow("YOLOv8 Glasses Detection", frame)
-
-    key = cv2.waitKey(1) & 0xFF
-    if key == ord('q'):
-        break
-    elif key == ord('r'):
-        frame_counter = 0
-        glasses_counter = 0
-        decision_made = False
-        final_label = ""
-
-cap.release()
-cv2.destroyAllWindows()
-client.loop_stop()
+if __name__ == "__main__":
+    main()
