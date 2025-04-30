@@ -8,32 +8,31 @@ from collections import deque
 from datetime import datetime
 import os
 
-#RUN sqlite3 anomalies.db
-#SELECT * FROM anomalies;
+# RUN in terminal: sqlite3 anomalies.db
+# SELECT * FROM anomalies;
 
-
-# Konfigurasjon
+# Configuration
 URL = "http://192.168.11.120:8080/get?"
 WHAT_TO_GET = ['accX', 'accY', 'accZ']
-THRESHOLD = 12.0  # Vibrasjonsterskel
-WAIT_AFTER_ANOMALY = 50  # Antall punkter å vente før snapshot
-WINDOW_SIZE = 100  # For plott
+THRESHOLD = 12.0  # Vibration threshold
+WAIT_AFTER_ANOMALY = 50  # Number of points to wait before saving a snapshot
+WINDOW_SIZE = 100  # For plotting
 
 DB_FILE = "anomalies.db"
 SNAPSHOT_FOLDER = "snapshots"
 
-# Lagre data for plotting
+# Store vibration values for plotting
 vibration_history = deque(maxlen=WINDOW_SIZE)
 
-# Hjelpevariabler
+# Helper variables
 anomaly_active = False
 anomaly_counter = 0
 last_detected_vibration = 0.0
 
-# Opprett snapshot-mappe hvis den ikke finnes
+# Create snapshot folder if it doesn't exist
 os.makedirs(SNAPSHOT_FOLDER, exist_ok=True)
 
-# Koble til database og lag tabell hvis nødvendig
+# Connect to the database and create table if needed
 def init_database():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -48,7 +47,7 @@ def init_database():
     conn.commit()
     conn.close()
 
-# Lagre hendelse i database
+# Save anomaly event to database
 def save_to_database(timestamp, vibration, filename):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -58,8 +57,9 @@ def save_to_database(timestamp, vibration, filename):
     ''', (timestamp, vibration, filename))
     conn.commit()
     conn.close()
-    print(f"🗂️ Lagret i database: {filename}")
+    print(f"🗂️ Saved to database: {filename}")
 
+# Fetch data from Phypox
 def phypox_data():
     try:
         output = subprocess.check_output(["curl", "-s", URL + '&'.join(WHAT_TO_GET)])
@@ -72,6 +72,7 @@ def phypox_data():
         print(f"⚠️ Error: {e}")
         return None
 
+# Analyze total vibration and detect anomaly
 def analyze(readings):
     accX = readings['accX']
     accY = readings['accY']
@@ -79,23 +80,25 @@ def analyze(readings):
 
     total_vibration = math.sqrt(accX**2 + accY**2 + accZ**2)
 
-    print(f"Vibrasjon: {total_vibration:.2f} m/s²", end='\t')
+    print(f"Vibration: {total_vibration:.2f} m/s²", end='\t')
 
     is_anomaly = total_vibration > THRESHOLD
 
     if is_anomaly:
-        print("🚨 ANOMALI DETEKTERT!")
+        print("🚨 ANOMALY DETECTED!")
     else:
-        print("✅ Normal vibrasjon.")
+        print("✅ Normal vibration.")
 
     return total_vibration, is_anomaly
 
+# Save plot image and record event
 def save_plot(fig, timestamp, vibration):
     filename = f"{SNAPSHOT_FOLDER}/anomaly_{timestamp}.png"
     fig.savefig(filename)
     print(f"💾 Saved plot: {filename}")
     save_to_database(timestamp, vibration, filename)
 
+# Main execution loop
 def main_loop():
     global anomaly_active, anomaly_counter, last_detected_vibration
 
@@ -106,9 +109,9 @@ def main_loop():
     line, = ax.plot([], [], lw=2)
     ax.set_ylim(0, 20)
     ax.set_xlim(0, WINDOW_SIZE)
-    ax.set_ylabel('Vibrasjon (m/s²)')
-    ax.set_xlabel('Tid (punkter)')
-    ax.set_title('Live Vibrasjonsmåling')
+    ax.set_ylabel('Vibration (m/s²)')
+    ax.set_xlabel('Time (points)')
+    ax.set_title('Live Vibration Monitoring')
 
     while True:
         readings = phypox_data()
@@ -116,7 +119,7 @@ def main_loop():
             total_vibration, is_anomaly = analyze(readings)
             vibration_history.append(total_vibration)
 
-            # Oppdater graf
+            # Update plot
             line.set_ydata(vibration_history)
             line.set_xdata(range(len(vibration_history)))
             ax.relim()
@@ -129,11 +132,11 @@ def main_loop():
                     anomaly_active = True
                     anomaly_counter = 0
                     last_detected_vibration = total_vibration
-                    print("📍 Starter snapshot-teller.")
+                    print("📍 Snapshot countdown started.")
                 elif total_vibration > last_detected_vibration:
                     anomaly_counter = 0
                     last_detected_vibration = total_vibration
-                    print("🔄 Kraftigere anomali oppdaget, restart teller.")
+                    print("🔄 Stronger anomaly detected, resetting countdown.")
 
             if anomaly_active:
                 anomaly_counter += 1
@@ -143,7 +146,7 @@ def main_loop():
                     anomaly_active = False
                     anomaly_counter = 0
                     last_detected_vibration = 0.0
-                    print("✅ Snapshot lagret og database oppdatert.")
+                    print("✅ Snapshot saved and database updated.")
 
         time.sleep(0.5)
 
