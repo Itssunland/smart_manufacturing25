@@ -7,12 +7,17 @@ import matplotlib.pyplot as plt
 from collections import deque
 from datetime import datetime
 import os
+from dotenv import load_dotenv
+import os
+
+
+
 
 # RUN in terminal: sqlite3 anomalies.db
 # SELECT * FROM anomalies;
 
-# Configuration
-URL = "http://192.168.11.120:8080/get?"
+load_dotenv()
+URL = os.getenv("PHYPHOX_URL")
 WHAT_TO_GET = ['accX', 'accY', 'accZ']
 THRESHOLD = 12.0  # Vibration threshold
 WAIT_AFTER_ANOMALY = 50  # Number of points to wait before saving a snapshot

@@ -14,6 +14,7 @@ venv/
 snapshots/
 *.db
 *.log
+.env
 
 # Jupyter artifacts
 .ipynb_checkpoints/
