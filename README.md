@@ -1,14 +1,61 @@
-# smart_manufacturing25
+# Drill Material Detection
 
-## 📱 Requirements: Phyphox App
+This project measures drilling vibration data and classifies the material being drilled based on three key signal features:
 
-This project relies on real-time sensor data from the [Phyphox app](https://phyphox.org/), available for **iOS** and **Android**.
+## Measured Features
 
-### Setup Steps:
-1. Install the **Phyphox** app on your phone.
-2. Open the `Acceleration` experiment or your custom `.phyphox` experiment.
-3. Enable **Remote Access** (click the Wi-Fi icon) and copy the given IP address (e.g. `http://192.168.1.100:8080`)
-4. Add this URL to your `.env` file like so: "PHYPHOX_URL=http://<your-ip>:8080/get?"
-5. Run the script to begin monitoring!
+1. **RMS Amplitude**
 
-> The app must remain open and active while streaming data.
+   * Definition: Root-mean-square of the vibration signal in each analysis window.
+   * What it captures: Overall vibration energy. Higher mass-density materials generate larger vibration amplitudes.
+
+2. **Spectral Entropy**
+
+   * Definition: Normalized Shannon entropy of the power spectral density.
+   * What it captures: Signal complexity. More heterogeneous materials produce broader spectra and higher entropy.
+
+3. **Spectral Centroid**
+
+   * Definition: Frequency-domain center of mass of the power spectrum (in Hz).
+   * What it captures: Dominant vibration frequency. Harder materials shift spectral energy toward higher frequencies.
+
+## Material Classification
+
+Classification thresholds are calibrated per material:
+
+| Material | RMS Threshold | Entropy Threshold | Centroid Threshold (Hz) |
+| -------- | ------------- | ----------------- | ----------------------- |
+| Wood     | 0.5           | 0.8               | 200                     |
+| Plastic  | 1.0           | 0.9               | 400                     |
+| Brick    | 1.5           | 0.7               | 800                     |
+
+1. Compute the three features for each window of sensor data.
+2. Compare to thresholds in order: Wood → Plastic → Brick.
+3. Assign the first material whose all thresholds (`rms <`, `entropy <`, `centroid <`) are met.
+
+## Usage
+
+1. Install dependencies:
+
+   ```bash
+   pip install smbus2 numpy matplotlib
+   ```
+2. Run simulation or real sensor mode:
+
+   ```bash
+   python drill_sim.py
+   ```
+3. Review live plot, transitions snapshots, and final visualization.
+
+## Output
+
+* **SQLite Database (`drill_sessions.db`)**:
+
+  * `sessions`: start/end timestamps
+  * `features`: per-window RMS, entropy, centroid
+  * `transitions`: detected material changes and snapshot image paths
+* **Snapshots Folder**: PNG images showing the exact transition point in RMS curve.
+
+---
+
+*Erlend Dragland, 2025*
