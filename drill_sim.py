@@ -1,107 +1,159 @@
 #!/usr/bin/env python3
-import numpy as np
 import math
 import time
+import sqlite3
 from collections import deque
+from datetime import datetime
+import numpy as np
 import matplotlib.pyplot as plt
+import os
 
 # ——— USER CONFIGURATION ———
-MATERIALS = [
-    ('Wood',    1.0, 200),  # 200 Hz
-    ('Plastic', 0.6, 400),  # 400 Hz
-    ('Brick',   1.8, 800),  # 800 Hz
+SIMULATE = True                # Use simulated data or real sensor
+SESSION_DURATION = 5           # seconds to run the session
+WINDOW_SIZE = 256              # samples per analysis window
+SAMPLE_RATE = 1000             # samples per second
+SENSOR_INTERVAL = 1.0 / SAMPLE_RATE
+
+# Thresholds: (name, rms_th, entropy_th, centroid_th)
+MATERIAL_THRESHOLDS = [
+    ('Wood',    0.5,  0.8, 200),
+    ('Plastic', 1.0,  0.9, 400),
+    ('Brick',   1.5,  0.7, 800),
 ]
-# Define test sequence for simulation
-TEST_SEQUENCE = MATERIALS + MATERIALS[::-1] + MATERIALS
-WINDOW_SIZE      = 256      # samples per analysis window
-SAMPLE_RATE      = 1000     # samples per second
-SEGMENT_DURATION = 0.5      # seconds each material lasts
-PAUSE_BETWEEN    = 0.0      # no pause between segments
-# ————————————————————————
+DB_FILE = "drill_sessions.db"
+SNAPSHOT_FOLDER = "snapshots"
 
+# Simulation sequence
+SIM_SEQUENCE = [
+    ('Wood',    0.4, 200, 2.0),
+    ('Plastic', 0.8, 400, 2.0),
+    ('Brick',   1.2, 800, 2.0),
+]
+CUM_DUR = np.cumsum([d for _,_,_,d in SIM_SEQUENCE])
+TOTAL_TIME = CUM_DUR[-1]
 
-def generate_stream(seq, sample_rate, duration, window_size):
-    total_samples = int(sample_rate * duration)
-    buffer = deque(maxlen=window_size)
-    for name, amp, freq in seq:
-        t = np.arange(total_samples) / sample_rate
-        segment = amp * np.sin(2 * np.pi * freq * t) + 0.05 * np.random.randn(total_samples)
-        for s in segment:
-            buffer.append(s)
-            if len(buffer) == window_size:
-                yield list(buffer), name
-        time.sleep(PAUSE_BETWEEN)
+os.makedirs(SNAPSHOT_FOLDER, exist_ok=True)
 
-def generate_real_stream(sample_rate, window_size):
-    buffer = deque(maxlen=window_size)
-    
-# Compute features: RMS, spectral entropy, spectral centroid
+# Sensor or simulation
+if not SIMULATE:
+    from smbus2 import SMBus
+    I2C_ADDR = 0x68
+    def init_sensor():
+        bus = SMBus(1)
+        bus.write_byte_data(I2C_ADDR, 0x6B, 0)
+        time.sleep(0.1)
+        return bus
+    def read_vibration(bus):
+        data = bus.read_i2c_block_data(I2C_ADDR, 0x3B, 6)
+        def conv(h,l): v=(h<<8)|l; return v-65536 if v&0x8000 else v
+        ax = conv(data[0],data[1])/16384.0*9.81
+        ay = conv(data[2],data[3])/16384.0*9.81
+        az = conv(data[4],data[5])/16384.0*9.81
+        return math.sqrt(ax*ax+ay*ay+az*az)
+else:
+    def simulate_vib(elapsed):
+        t = min(elapsed, TOTAL_TIME)
+        idx = int(np.searchsorted(CUM_DUR, t))
+        mat, amp, freq, dur = SIM_SEQUENCE[idx]
+        t_in = t - (CUM_DUR[idx]-dur)
+        return amp*math.sin(2*math.pi*freq*t_in), mat
 
+# Feature extraction & classification
 def extract_features(buf):
-    vals = np.array(buf) - np.mean(buf)
-    rms = math.sqrt(np.mean(vals**2))
-    yf = np.abs(np.fft.rfft(vals))
-    xf = np.fft.rfftfreq(len(vals), d=1/SAMPLE_RATE)
-    ps = yf / np.sum(yf)
-    entropy = -np.sum(ps * np.log(ps + 1e-12)) / np.log(len(ps))
-    centroid = np.sum(xf * ps)
+    arr = np.array(buf)-np.mean(buf)
+    rms = math.sqrt(np.mean(arr**2))
+    yf = np.abs(np.fft.rfft(arr))
+    xf = np.fft.rfftfreq(len(arr), d=SENSOR_INTERVAL)
+    ps = yf/np.sum(yf)
+    entropy = -np.sum(ps*np.log(ps+1e-12))/math.log(len(ps))
+    centroid = np.sum(xf*ps)
     return rms, entropy, centroid
 
-if __name__ == '__main__':
-    # Collect features
-    rms_vals, ent_vals, cen_vals, times, mats = [], [], [], [], []
-    for idx, (buf, mat) in enumerate(generate_stream(TEST_SEQUENCE, SAMPLE_RATE, SEGMENT_DURATION, WINDOW_SIZE)):
-        rms, ent, cen = extract_features(buf)
-        t = idx * SEGMENT_DURATION + SEGMENT_DURATION/2
-        rms_vals.append(rms)
-        ent_vals.append(ent)
-        cen_vals.append(cen)
-        times.append(t)
-        mats.append(mat)
-        print(f"Segment {idx+1} ({mat}): RMS={rms:.2f}, Ent={ent:.3f}, Centroid={cen:.1f} Hz")
+def classify(rms, entropy, centroid):
+    for name, r_th, e_th, c_th in MATERIAL_THRESHOLDS:
+        if rms<r_th and entropy<e_th and centroid<c_th:
+            return name
+    return MATERIAL_THRESHOLDS[-1][0]
 
-    total_duration = len(mats) * SEGMENT_DURATION
-    # Detect change boundaries and labels
-    boundaries, labels = [], []
-    prev_mat = mats[0]
-    labels.append(prev_mat)
-    for i in range(1, len(mats)):
-        if mats[i] != prev_mat:
-            boundary = i * SEGMENT_DURATION
-            boundaries.append(boundary)
-            prev_mat = mats[i]
-            labels.append(prev_mat)
+# Database setup
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('CREATE TABLE IF NOT EXISTS sessions(session_id INTEGER PRIMARY KEY, start_ts TEXT, end_ts TEXT)')
+    c.execute('CREATE TABLE IF NOT EXISTS features(session_id INTEGER, window_idx INTEGER, rms REAL, entropy REAL, centroid REAL, PRIMARY KEY(session_id, window_idx))')
+    conn.commit()
+    return conn
 
-    # Prepare color mapping per material
-    cmap = plt.get_cmap('tab10')
-    unique = [m[0] for m in MATERIALS]
-    color_map = {name: cmap(i) for i, name in enumerate(unique)}
+# Main loop with final snapshot
+def main():
+    conn = init_db()
+    sid = conn.cursor().execute("INSERT INTO sessions(start_ts) VALUES(datetime('now'))").lastrowid
+    conn.commit()
+    print(f"Session {sid} started at {datetime.now()}")
 
-    # Plot: three panels
-    fig, axes = plt.subplots(3,1, figsize=(10,8), sharex=True)
-    # Panel 1: RMS
-    axes[0].plot(times, rms_vals, 'o-')
-    axes[0].set_ylabel('RMS')
-    axes[0].set_title('RMS Amplitude Over Time')
-    # Panel 2: Entropy
-    axes[1].plot(times, ent_vals, 'o-', color='C1')
-    axes[1].set_ylabel('Spectral Entropy')
-    axes[1].set_title('Spectral Entropy Over Time')
-    # Panel 3: Spectral Centroid
-    axes[2].plot(times, cen_vals, 'o-', color='C2')
-    axes[2].set_ylabel('Spectral Centroid (Hz)')
-    axes[2].set_title('Spectral Centroid Over Time')
-    axes[2].set_xlabel('Time (s)')
+    vib_buf = deque(maxlen=WINDOW_SIZE)
+    if not SIMULATE:
+        bus = init_sensor()
 
-    # Shade segments: same material = same color
-    for ax in axes:
-        start = 0
-        for boundary, label in zip(boundaries + [total_duration], labels):
-            ax.axvspan(start, boundary, alpha=0.3, color=color_map[label])
-            ax.axvline(boundary, color='k', linestyle='--')
-            ax.text((start + boundary)/2, ax.get_ylim()[1]*0.9, label,
-                    ha='center', va='top', bbox=dict(facecolor='white', alpha=0.6))
-            start = boundary
+    hist_r, hist_e, hist_c = [], [], []
+    times = []
+    transition_indices = []
+    transition_labels = []
+    last_mat = None
+    start_time = time.time()
 
-    plt.tight_layout()
+    plt.ion()
+    fig_live, ax_live = plt.subplots(figsize=(6, 4))
+
+    while time.time() - start_time < SESSION_DURATION:
+        vib, mat = (simulate_vib(time.time()-start_time) if SIMULATE else (read_vibration(bus), None))
+        vib_buf.append(vib)
+        if len(vib_buf) == WINDOW_SIZE:
+            rms, ent, cen = extract_features(vib_buf)
+            conn.execute('INSERT OR REPLACE INTO features VALUES(?,?,?,?,?)', (sid, len(hist_r), rms, ent, cen))
+            conn.commit()
+            # detect transitions
+            if last_mat is not None and mat != last_mat:
+                idx = len(hist_r)
+                transition_indices.append(idx)
+                transition_labels.append(f"{last_mat}→{mat}")
+            last_mat = mat
+            hist_r.append(rms)
+            hist_e.append(ent)
+            hist_c.append(cen)
+            times.append(len(hist_r)-1)
+            # live plot
+            ax_live.clear()
+            ax_live.plot(times, hist_r, '-o')
+            for idx in transition_indices:
+                ax_live.axvline(idx, color='red', linestyle='--', linewidth=2)
+            ax_live.set_ylabel('RMS Amplitude')
+            ax_live.set_xlabel('Window Index')
+            fig_live.canvas.draw()
+            fig_live.canvas.flush_events()
+        time.sleep(SENSOR_INTERVAL)
+
+    # end session
+    conn.cursor().execute("UPDATE sessions SET end_ts=datetime('now') WHERE session_id=?", (sid,))
+    conn.commit()
+    conn.close()
+    print(f"Session {sid} ended at {datetime.now()} - saving snapshot...")
+
+    # final 3-panel snapshot with multiple red lines and labels
+    fig2, axes = plt.subplots(3, 1, sharex=True, figsize=(10, 8))
+    datasets = [(hist_r, 'RMS Amplitude'), (hist_e, 'Spectral Entropy'), (hist_c, 'Spectral Centroid (Hz)')]
+    for ax, (data, title) in zip(axes, datasets):
+        ax.plot(times, data, '-o')
+        for idx, label in zip(transition_indices, transition_labels):
+            ax.axvline(idx, color='red', linestyle='--', linewidth=2)
+            ax.text(idx, max(data)*1.02, label, ha='center', va='bottom', backgroundcolor='white')
+        ax.set_ylabel(title)
+    axes[-1].set_xlabel('Window Index')
+    fig2.tight_layout()
+    fname = f"{SNAPSHOT_FOLDER}/session_{sid}_final_3panel.png"
+    fig2.savefig(fname)
     plt.show()
+
+if __name__ == '__main__':
+    main()
