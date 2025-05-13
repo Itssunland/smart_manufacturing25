@@ -56,6 +56,12 @@ Classification thresholds are calibrated per material:
   * `transitions`: detected material changes and snapshot image paths
 * **Snapshots Folder**: PNG images showing the exact transition point in RMS curve.
 
+## File explination
+rf_syntetic_data/simulate_data.py -> simulate trainingdata
+rf_syntetic_data/train_RF -> training random forest model
+--> rf_material_cld.pkl -> trained model
+drill_sim.py -> simulates test and uses trained model
+
 ---
 
 *Erlend Dragland, 2025*
