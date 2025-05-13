@@ -7,7 +7,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix
 
-# 1) Hent data fra SQLite
+#Scikit-learn, building a training and a testing set, cross valiating.
+# GET data from SQLite3
 DB_FILE = 'drill_sessions.db'
 conn = sqlite3.connect(DB_FILE)
 cur = conn.cursor()
@@ -26,7 +27,7 @@ if not rows:
 X = np.array([row[:3] for row in rows])
 y = np.array([row[3]   for row in rows])
 
-# 2) Split train/test
+# 2) Split train(70%)/test(30%)
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.3, stratify=y, random_state=42
 )

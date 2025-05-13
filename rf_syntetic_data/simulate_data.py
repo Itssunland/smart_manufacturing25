@@ -30,9 +30,10 @@ DURATION_PER_MATERIAL = 5.0  # seconds
 
 # Material definitions: (name, amplitude, frequency Hz)
 MATERIALS = [
-    ('Wood', 0.4, 200),
+    ('Wood',    0.4, 200),
     ('Plastic', 0.8, 400),
-    ('Brick', 1.2, 800)
+    ('Rubber',  0.3, 150),
+    ('Brick',   1.2, 800)
 ]
 
 # Create or open database and ensure features table exists

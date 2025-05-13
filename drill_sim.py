@@ -16,8 +16,10 @@ WINDOW_SIZE = 256              # samples per analysis window
 SAMPLE_RATE = 1000             # samples per second
 SENSOR_INTERVAL = 1.0 / SAMPLE_RATE
 DB_FILE = "drill_sessions.db"
+MODEL_FILE = 'rf_material_clf.pkl'  
 SNAPSHOT_FOLDER = "snapshots"
-MODEL_FILE = 'rf_material_clf.pkl'  # path to trained RF model
+os.makedirs(SNAPSHOT_FOLDER, exist_ok=True)
+
 
 # Load trained Random Forest model
 with open(MODEL_FILE, 'rb') as mf:
@@ -86,9 +88,11 @@ def init_db():
     # Sessions table
     c.execute('''
         CREATE TABLE IF NOT EXISTS sessions (
-            session_id INTEGER PRIMARY KEY,
-            start_ts TEXT,
-            end_ts TEXT
+            session_id      INTEGER PRIMARY KEY,
+            start_ts        TEXT,
+            end_ts          TEXT,
+            snapshot_path   TEXT,
+            snapshot_ts     TEXT
         )
     ''')
     conn.commit()
@@ -96,51 +100,156 @@ def init_db():
 
 # Main loop
 def main():
-    conn = init_db()
-    sid = conn.cursor().execute("INSERT INTO sessions(start_ts) VALUES(datetime('now'))").lastrowid
-    conn.commit()
-    print(f"Session {sid} started at {datetime.now()}")
+    import pickle, sys
 
+    # ——— Load RF model ———
+    with open('rf_material_clf.pkl', 'rb') as mf:
+        clf = pickle.load(mf)
+
+    # ——— State & Buffers ———
     vib_buf = deque(maxlen=WINDOW_SIZE)
-    if not SIMULATE:
-        bus = init_sensor()
-
-    plt.ion()
-    fig_live, ax_live = plt.subplots(figsize=(6,4))
-    times, rms_hist = [], []
-
-    start = time.time()
+    last_mat = None
+    change_points = []      # list of (idx, "from→to")
+    times, rms_hist, ent_hist, cen_hist = [], [], [], []
     idx = 0
+    start = time.time()
+    saw_change = False
+    sid = None
+
+    # segment background colors
+    seg_colors = {
+        'Wood':    'burlywood',
+        'Plastic': 'lightgreen',
+        'Rubber':  'lightcoral',
+        'Brick':   'lightgray',
+    }
+
+    # ——— Live plot setup ———
+    plt.ion()
+    fig_live, (ax_rms, ax_ent, ax_cen) = plt.subplots(
+        3, 1, sharex=True, figsize=(6, 9),
+        constrained_layout=True
+    )
+    ax_rms.set_ylabel('RMS Amplitude')
+    ax_ent.set_ylabel('Spectral Entropy')
+    ax_cen.set_ylabel('Spectral Centroid (Hz)')
+    ax_cen.set_xlabel('Window Index')
+
+    # ——— Main loop ———
     while time.time() - start < SESSION_DURATION:
-        vib = simulate_vib(time.time()-start) if SIMULATE else read_vibration(bus)
+        vib = simulate_vib(time.time() - start) if SIMULATE else read_vibration(bus)
         vib_buf.append(vib)
+
         if len(vib_buf) == WINDOW_SIZE:
             rms, ent, cen = extract_features(vib_buf)
-            # predict via RF model
             mat_pred = clf.predict([[rms, ent, cen]])[0]
-            print(f"Window {idx}: Predicted material = {mat_pred}")
-            # store features and prediction
-            conn.execute('INSERT OR REPLACE INTO features VALUES(?,?,?,?,?,?)',
-                         (sid, idx, rms, ent, cen, mat_pred))
-            conn.commit()
-            # update live RMS plot
+
+            # Lazy‐init session on first window
+            if sid is None:
+                conn = init_db()
+                sid = conn.cursor().execute(
+                    "INSERT INTO sessions(start_ts) VALUES(datetime('now'))"
+                ).lastrowid
+                conn.commit()
+
+            # Detect change
+            if last_mat is not None and mat_pred != last_mat:
+                saw_change = True
+                change_points.append((idx, f"{last_mat}→{mat_pred}"))
+            last_mat = mat_pred
+
+            # Only store once we’ve seen at least one change
+            if saw_change:
+                conn.execute(
+                    'INSERT OR REPLACE INTO features '
+                    '(session_id, window_idx, rms, entropy, centroid, label) '
+                    'VALUES (?, ?, ?, ?, ?, ?)',
+                    (sid, idx, rms, ent, cen, mat_pred)
+                )
+                conn.commit()
+
+            # Update histories
             times.append(idx)
             rms_hist.append(rms)
-            ax_live.clear()
-            ax_live.plot(times, rms_hist, '-o')
-            ax_live.set_ylabel('RMS Amplitude')
-            ax_live.set_xlabel('Window Index')
-            fig_live.canvas.draw(); fig_live.canvas.flush_events()
+            ent_hist.append(ent)
+            cen_hist.append(cen)
+
+            # Build segments for shading
+            segments = []
+            prev_start = 0
+            prev_mat = None
+            for cp_idx, cp_label in change_points:
+                frm, to = cp_label.split('→')
+                segments.append((prev_start, cp_idx, frm))
+                prev_start = cp_idx
+                prev_mat = to
+            if prev_mat is not None:
+                segments.append((prev_start, idx+1, prev_mat))
+
+            # Redraw panels
+            for ax, data in zip((ax_rms, ax_ent, ax_cen),
+                                (rms_hist, ent_hist, cen_hist)):
+                ax.clear()
+                ax.plot(times, data, '-o')
+                # shade segments
+                for s, e, m in segments:
+                    ax.axvspan(s, e, color=seg_colors[m], alpha=0.2)
+                # draw change lines & labels
+                for cp_idx, cp_label in change_points:
+                    ax.axvline(cp_idx, color='red', linestyle='--', linewidth=2)
+                    y_max = max(data) * 1.02
+                    ax.text(cp_idx, y_max, cp_label,
+                            ha='center', va='bottom',
+                            bbox=dict(facecolor='white', alpha=0.7))
+            ax_rms.set_ylabel('RMS Amplitude')
+            ax_ent.set_ylabel('Spectral Entropy')
+            ax_cen.set_ylabel('Spectral Centroid (Hz)')
+            ax_cen.set_xlabel('Window Index')
+
+            fig_live.tight_layout()
+            fig_live.canvas.draw()
+            fig_live.canvas.flush_events()
+
             idx += 1
+
         time.sleep(SENSOR_INTERVAL)
 
-    # finalize session
-    conn.execute("UPDATE sessions SET end_ts=datetime('now') WHERE session_id=?", (sid,))
+    # ——— Tear‐down ———
+    if sid is None or not saw_change:
+        # No valid session → clean up and exit
+        print("No material change detected; nothing saved.")
+        if sid is not None:
+            # remove the session row we created
+            conn.execute("DELETE FROM sessions WHERE session_id = ?", (sid,))
+            conn.commit()
+        conn.close()
+        plt.close('all')
+        return
+
+    # We did see a change → finalize
+    conn.execute(
+        "UPDATE sessions SET end_ts = datetime('now') WHERE session_id = ?",
+        (sid,)
+    )
+    conn.commit()
+
+    # Save and record the final plot
+    snapshot_path = os.path.join(SNAPSHOT_FOLDER, f"session_{sid}_live.png")
+    fig_live.savefig(snapshot_path)
+    print(f"Saved visualization to {snapshot_path}")
+
+    conn.execute(
+        "UPDATE sessions SET snapshot_path = ?, snapshot_ts = datetime('now') "
+        "WHERE session_id = ?",
+        (snapshot_path, sid)
+    )
     conn.commit()
     conn.close()
-    print(f"Session {sid} ended at {datetime.now()}")
-    plt.ioff()
-    plt.show()
+    plt.show(block=False)
+    plt.pause(3)
+    plt.close('all')
+    print(f"Session {sid} completed with changes and resources saved.")
+
 
 if __name__ == '__main__':
     main()
