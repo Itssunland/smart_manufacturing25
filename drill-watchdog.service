@@ -1,0 +1,21 @@
+[Unit]
+Description=Drill-Vibration Watchdog
+After=multi-user.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/smart_manufacturing25
+Environment=VIRTUAL_ENV=/home/pi/smart_manufacturing25/.venv
+Environment=PATH=/home/pi/smart_manufacturing25/.venv/bin:/usr/bin:/bin
+ExecStart=/home/pi/smart_manufacturing25/watchdog.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+
+""" #HOW TO: 
+sudo systemctl daemon-reload
+sudo systemctl enable drill-watchdog
+sudo systemctl start  drill-watchdog
+
+"""
