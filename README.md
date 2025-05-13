@@ -28,6 +28,8 @@ Classification thresholds are calibrated per material:
 | Wood     | 0.5           | 0.8               | 200                     |
 | Plastic  | 1.0           | 0.9               | 400                     |
 | Brick    | 1.5           | 0.7               | 800                     |
+| Rubber   | 1.5           | 0.7               | 800                     |
+
 
 1. Compute the three features for each window of sensor data.
 2. Compare to thresholds in order: Wood → Plastic → Brick.
