@@ -1,23 +1,42 @@
 # Drill Material Detection
 
-This project measures drilling vibration data and classifies the material being drilled based on three key signal features:
+This project captures drilling vibration data with a Raspberry Pi + MPU-6050 accelerometer, extracts three signal features, and classifies the drilled material in real time using a pretrained Random Forest model.
 
-## Measured Features
+---
 
-1. **RMS Amplitude**
+## Features
 
-   * Definition: Root-mean-square of the vibration signal in each analysis window.
-   * What it captures: Overall vibration energy. Higher mass-density materials generate larger vibration amplitudes.
+1. **RMS Amplitude**  
+   *Definition:* Root-mean-square of the vibration signal in each analysis window.  
+   *Captures:* Overall vibration energy—denser or harder materials yield higher RMS.
 
-2. **Spectral Entropy**
+2. **Spectral Entropy**  
+   *Definition:* Shannon entropy of the normalized power spectral density.  
+   *Captures:* Signal complexity—more heterogeneous materials produce broader spectra.
 
-   * Definition: Normalized Shannon entropy of the power spectral density.
-   * What it captures: Signal complexity. More heterogeneous materials produce broader spectra and higher entropy.
+3. **Spectral Centroid**  
+   *Definition:* “Center of mass” of the power spectrum (Hz).  
+   *Captures:* Dominant vibration frequency—harder materials shift energy upward.
 
-3. **Spectral Centroid**
+---
 
-   * Definition: Frequency-domain center of mass of the power spectrum (in Hz).
-   * What it captures: Dominant vibration frequency. Harder materials shift spectral energy toward higher frequencies.
+## Repo Structure
+
+```text
+smart_manufacturing25/
+├── data/  
+│   └── drill_sim_sessions.db       # SQLite DB for live sessions
+├── models/  
+│   └── rf_material_clf.pkl         # Pretrained RandomForest model
+├── snapshots/                      # Auto-saved PNGs per session
+├── src/  
+│   ├── drill_sim.py                # Live sensor acquisition & plotting
+│   ├── simulate_data.py            # Simulate & populate database
+│   ├── collect_data.py             # (Optional) manual data collection
+│   └── train_rf.py                 # Train RF model on `data/training_data.db`
+├── requirements.txt                # Python dependencies
+├── .gitignore                      
+└── README.md
 
 ## Material Classification
 
@@ -27,12 +46,12 @@ Classification thresholds are calibrated per material:
 | -------- | ------------- | ----------------- | ----------------------- |
 | Wood     | 0.5           | 0.8               | 200                     |
 | Plastic  | 1.0           | 0.9               | 400                     |
+| Rubber   | 0.3           | 0.95              | 150                     |
 | Brick    | 1.5           | 0.7               | 800                     |
-| Rubber   | 1.5           | 0.7               | 800                     |
 
 
 1. Compute the three features for each window of sensor data.
-2. Compare to thresholds in order: Wood → Plastic → Brick.
+2. Compare to thresholds in order: Wood → Plastic → Rubber → Brick.
 3. Assign the first material whose all thresholds (`rms <`, `entropy <`, `centroid <`) are met.
 
 ## Usage
@@ -40,7 +59,7 @@ Classification thresholds are calibrated per material:
 1. Install dependencies:
 
    ```bash
-   pip install smbus2 numpy matplotlib
+   pip install smbus2 numpy matplotlib scikit-learn paho-mqtt
    ```
 2. Run simulation or real sensor mode:
 

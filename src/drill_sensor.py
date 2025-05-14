@@ -9,6 +9,8 @@ from datetime import datetime
 
 import numpy as np
 import matplotlib.pyplot as plt
+import RPi.GPIO as GPIO
+from smbus2 import SMBus
 
 # ——— USER CONFIGURATION ———
 SIMULATE = False               # Use real sensor
@@ -19,6 +21,8 @@ SENSOR_INTERVAL = 1.0 / SAMPLE_RATE
 DB_FILE = "drill_sessions.db"
 MODEL_FILE = "rf_material_clf.pkl"
 SNAPSHOT_FOLDER = "snapshots"
+BUZZER_PIN = 27                # BCM pin for buzzer
+
 os.makedirs(SNAPSHOT_FOLDER, exist_ok=True)
 
 # ——— Load trained Random Forest model ———
@@ -26,30 +30,24 @@ with open(MODEL_FILE, "rb") as mf:
     clf = pickle.load(mf)
 
 # ——— Sensor setup for MPU-6050 over I²C ———
-if not SIMULATE:
-    from smbus2 import SMBus
-    I2C_ADDR = 0x68
+I2C_ADDR = 0x68
 
-    def init_sensor():
-        bus = SMBus(1)
-        # Wake up MPU-6050
-        bus.write_byte_data(I2C_ADDR, 0x6B, 0)
-        time.sleep(0.1)
-        return bus
+def init_sensor():
+    bus = SMBus(1)
+    # Wake up MPU-6050
+    bus.write_byte_data(I2C_ADDR, 0x6B, 0)
+    time.sleep(0.1)
+    return bus
 
-    def read_vibration(bus):
-        data = bus.read_i2c_block_data(I2C_ADDR, 0x3B, 6)
-        def conv(h, l): 
-            v = (h << 8) | l
-            return v - 65536 if v & 0x8000 else v
-        ax = conv(data[0], data[1]) / 16384.0 * 9.81
-        ay = conv(data[2], data[3]) / 16384.0 * 9.81
-        az = conv(data[4], data[5]) / 16384.0 * 9.81
-        return math.sqrt(ax*ax + ay*ay + az*az)
-else:
-    # Simulation stub (not used in sensor mode)
-    def simulate_vib(elapsed):
-        return 0.0
+def read_vibration(bus):
+    data = bus.read_i2c_block_data(I2C_ADDR, 0x3B, 6)
+    def conv(h, l):
+        v = (h << 8) | l
+        return v - 65536 if v & 0x8000 else v
+    ax = conv(data[0], data[1]) / 16384.0 * 9.81
+    ay = conv(data[2], data[3]) / 16384.0 * 9.81
+    az = conv(data[4], data[5]) / 16384.0 * 9.81
+    return math.sqrt(ax*ax + ay*ay + az*az)
 
 # ——— Feature extraction ———
 def extract_features(buf):
@@ -95,6 +93,10 @@ def main():
     # Initialize sensor bus
     bus = init_sensor() if not SIMULATE else None
 
+    # Setup buzzer GPIO
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(BUZZER_PIN, GPIO.OUT, initial=GPIO.LOW)
+
     # Buffers & state
     vib_buf = deque(maxlen=WINDOW_SIZE)
     last_mat = None
@@ -105,12 +107,12 @@ def main():
     saw_change = False
     sid = None
 
-    # Background colors per material
+    # Colors for shading segments
     seg_colors = {
-        'Wood': 'burlywood',
+        'Wood':    'burlywood',
         'Plastic': 'lightgreen',
-        'Rubber': 'lightcoral',
-        'Brick': 'lightgray',
+        'Rubber':  'lightcoral',
+        'Brick':   'lightgray',
     }
 
     # Live plot setup
@@ -132,7 +134,7 @@ def main():
             rms, ent, cen = extract_features(vib_buf)
             mat_pred = clf.predict([[rms, ent, cen]])[0]
 
-            # Lazy-init DB session
+            # Lazy-init DB session on first window
             if sid is None:
                 conn = init_db()
                 sid = conn.cursor().execute(
@@ -143,6 +145,10 @@ def main():
             # Detect material change
             if last_mat is not None and mat_pred != last_mat:
                 saw_change = True
+                # Send buzzer signal
+                GPIO.output(BUZZER_PIN, GPIO.HIGH)
+                time.sleep(0.3)
+                GPIO.output(BUZZER_PIN, GPIO.LOW)
                 change_points.append((idx, f"{last_mat}→{mat_pred}"))
             last_mat = mat_pred
 
@@ -156,13 +162,13 @@ def main():
                 )
                 conn.commit()
 
-            # Update history
+            # Update histories
             times.append(idx)
             rms_hist.append(rms)
             ent_hist.append(ent)
             cen_hist.append(cen)
 
-            # Build shading segments
+            # Prepare segments for shading
             segments = []
             prev = 0
             prev_label = None
@@ -174,15 +180,15 @@ def main():
             if prev_label:
                 segments.append((prev, idx+1, prev_label))
 
-            # Redraw plots
+            # Redraw panels
             for ax, data in zip((ax_rms, ax_ent, ax_cen),
                                 (rms_hist, ent_hist, cen_hist)):
                 ax.clear()
                 ax.plot(times, data, '-o')
-                # shade
-                for s, e, mat in segments:
-                    ax.axvspan(s, e, color=seg_colors.get(mat, 'white'), alpha=0.2)
-                # change lines and labels
+                # Shade segments
+                for s, e, m in segments:
+                    ax.axvspan(s, e, color=seg_colors[m], alpha=0.2)
+                # Change lines and labels
                 for cp_idx, cp_label in change_points:
                     ax.axvline(cp_idx, color='red', linestyle='--', linewidth=2)
                     y_m = max(data) * 1.02
@@ -207,6 +213,7 @@ def main():
             conn.execute("DELETE FROM sessions WHERE session_id=?", (sid,))
             conn.commit()
         conn.close()
+        GPIO.cleanup()
         plt.close('all')
         return
 
@@ -232,6 +239,8 @@ def main():
     plt.show(block=False)
     plt.pause(3)
     plt.close('all')
+    GPIO.cleanup()
+
     print(f"Session {sid} completed with changes and resources saved.")
 
 if __name__ == '__main__':

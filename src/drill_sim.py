@@ -8,17 +8,41 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import pickle
+import logging, os
+
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+LOG_DIR  = os.path.join(BASE_DIR, 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, 'drill_sim.log')
+
+logging.basicConfig(
+    level=logging.INFO, #cana be DEBUG or INFO
+    format='%(asctime)s %(levelname)-8s %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler()   # still prints to console
+    ]
+)
+logger = logging.getLogger(__name__)
+logging.getLogger('matplotlib.font_manager').setLevel(logging.WARNING) #Silence matplotlib font-finder chatter
+
+
+# ——— PATH SETUP ———
+BASE_DIR       = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+DATA_DIR       = os.path.join(BASE_DIR, 'data')
+MODELS_DIR     = os.path.join(BASE_DIR, 'models')
+SNAPSHOT_DIR   = os.path.join(BASE_DIR, 'snapshots')
+
+DB_FILE        = os.path.join(DATA_DIR,    'drill_sessions.db')
+MODEL_FILE     = os.path.join(MODELS_DIR,  'rf_material_clf.pkl')
+os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
 # ——— USER CONFIGURATION ———
-SIMULATE = True                # Use simulated data or real sensor
-SESSION_DURATION = 5           # seconds to run the session
-WINDOW_SIZE = 256              # samples per analysis window
-SAMPLE_RATE = 1000             # samples per second
-SENSOR_INTERVAL = 1.0 / SAMPLE_RATE
-DB_FILE = "drill_sessions.db"
-MODEL_FILE = 'rf_material_clf.pkl'  
-SNAPSHOT_FOLDER = "snapshots"
-os.makedirs(SNAPSHOT_FOLDER, exist_ok=True)
+SIMULATE        = True   # set False when running on real sensor
+SESSION_DURATION =   5   # seconds
+WINDOW_SIZE      = 256   # samples per analysis window
+SAMPLE_RATE      =1000   # Hz
+SENSOR_INTERVAL = 1.0/SAMPLE_RATE
 
 
 # Load trained Random Forest model
@@ -103,7 +127,7 @@ def main():
     import pickle, sys
 
     # ——— Load RF model ———
-    with open('rf_material_clf.pkl', 'rb') as mf:
+    with open('../models/rf_material_clf.pkl', 'rb') as mf:
         clf = pickle.load(mf)
 
     # ——— State & Buffers ———
@@ -206,7 +230,6 @@ def main():
             ax_cen.set_ylabel('Spectral Centroid (Hz)')
             ax_cen.set_xlabel('Window Index')
 
-            fig_live.tight_layout()
             fig_live.canvas.draw()
             fig_live.canvas.flush_events()
 
@@ -217,7 +240,7 @@ def main():
     # ——— Tear‐down ———
     if sid is None or not saw_change:
         # No valid session → clean up and exit
-        print("No material change detected; nothing saved.")
+        logger.info("No material change detected; nothing saved.")
         if sid is not None:
             # remove the session row we created
             conn.execute("DELETE FROM sessions WHERE session_id = ?", (sid,))
@@ -234,9 +257,9 @@ def main():
     conn.commit()
 
     # Save and record the final plot
-    snapshot_path = os.path.join(SNAPSHOT_FOLDER, f"session_{sid}_live.png")
+    snapshot_path = os.path.join(SNAPSHOT_DIR, f"session_{sid}_live.png")
     fig_live.savefig(snapshot_path)
-    print(f"Saved visualization to {snapshot_path}")
+    logger.info(f"Saved visualization to {snapshot_path}")
 
     conn.execute(
         "UPDATE sessions SET snapshot_path = ?, snapshot_ts = datetime('now') "
@@ -248,7 +271,7 @@ def main():
     plt.show(block=False)
     plt.pause(3)
     plt.close('all')
-    print(f"Session {sid} completed with changes and resources saved.")
+    logger.info(f"Session {sid} completed with changes and resources saved.")
 
 
 if __name__ == '__main__':

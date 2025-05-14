@@ -1,6 +1,6 @@
 numpy
 matplotlib
 scikit-learn
-smbus2
+smbus2 
 paho-mqtt #if MQTT
 ruptures #if PELT
