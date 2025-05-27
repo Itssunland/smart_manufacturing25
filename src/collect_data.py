@@ -10,7 +10,6 @@ SAMPLE_RATE = 1000
 SENSOR_INTERVAL = 1.0 / SAMPLE_RATE
 DB_FILE = "data/training_data.db"
 
-# Materialer du kan velge mellom:
 LABELS = ['Wood', 'Plastic', 'Rubber', 'Brick']
 
 # … I2C‐init som i drill_sim.py …
