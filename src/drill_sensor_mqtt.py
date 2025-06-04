@@ -14,18 +14,20 @@ PORT        = 1883
 TOPIC       = "drill/data"
 CLIENT_ID   = f"pi-subscriber-{random.randint(0,999)}"
 MODEL_FILE  = "/home/pi/models/rf_material_clf.pkl"
-BUZZER_PIN  = 27
+
+# Bytt ut buzzeren med en LED på BCM 17
+LED_PIN     = 17        # GPIO17 (pinne 11 på header)
 WINDOW_SIZE = 256
 
-# ——— Load trained RF model ———
+# ——— Last inn trenet RF-modell ———
 with open(MODEL_FILE, 'rb') as f:
     clf = pickle.load(f)
 
-# ——— GPIO setup ———
+# ——— GPIO-setup ———
 GPIO.setmode(GPIO.BCM)
-GPIO.setup(BUZZER_PIN, GPIO.OUT, initial=GPIO.LOW)
+GPIO.setup(LED_PIN, GPIO.OUT, initial=GPIO.LOW)
 
-# buffer for last N RMS values
+# buffer for siste N RMS-verdier
 rms_buf = deque(maxlen=WINDOW_SIZE)
 last_label = None
 
@@ -42,24 +44,24 @@ def on_message(client, userdata, msg):
         return
 
     rms_buf.append(rms)
-    # once we have a full window we could compute entropy+centroid,
-    # but here we just demo with RMS alone:
+    # når vi har WINDOW_SIZE elementer, kjør klassifisering
     if len(rms_buf) == WINDOW_SIZE:
+        # Her demonstrerer vi med bare RMS som eneste feature
         features = np.array([rms, 0.0, 0.0]).reshape(1, -1)
         mat = clf.predict(features)[0]
         print(f"Predicted material: {mat}")
 
         if last_label and mat != last_label:
-            # beep on change
-            GPIO.output(BUZZER_PIN, GPIO.HIGH)
+            # blink LED ved endring
+            GPIO.output(LED_PIN, GPIO.HIGH)
             time.sleep(0.2)
-            GPIO.output(BUZZER_PIN, GPIO.LOW)
+            GPIO.output(LED_PIN, GPIO.LOW)
 
         last_label = mat
 
 client = mqtt.Client(CLIENT_ID)
-# If you need authentication on EMQX, uncomment:
-# client.username_pw_set("emqx", "public")
+# Hvis EMQX-broker krever brukernavn/passord, sett det her:
+# client.username_pw_set("brukernavn", "passord")
 
 client.on_connect = on_connect
 client.on_message = on_message

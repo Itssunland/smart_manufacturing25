@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-drill_sensor.py
+drill_sensor_led.py
 
 Automatically start/stop sessions on drill vibration,
-classify material changes with RF, buzz on change,
+classify material changes with RF, blink LED on change,
 log to file, store to SQLite, and save a 3-panel plot.
 """
 import os
@@ -55,7 +55,7 @@ SAMPLE_RATE       = 1000     # Hz
 SENSOR_INTERVAL   = 1.0 / SAMPLE_RATE
 IDLE_THRESHOLD    = 0.2      # m/s² below which we consider "not drilling"
 IDLE_WINDOW_SECS  = 1.0      # seconds of idle before ending session
-BUZZER_PIN        = 27       # BCM pin for buzzer
+LED_PIN           = 27       # BCM pin for LED (erstatter buzzer)
 
 # ——— LOAD RF MODEL ———
 with open(MODEL_FILE, 'rb') as mf:
@@ -146,11 +146,11 @@ def main():
     global start_time
     start_time = time.time()
 
-    # build sensor & buzzer
+    # build sensor & LED
     bus = init_sensor()
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(BUZZER_PIN, GPIO.OUT, initial=GPIO.LOW)
-    logger.info(f"Buzzer initialized on BCM pin {BUZZER_PIN}")
+    GPIO.setup(LED_PIN, GPIO.OUT, initial=GPIO.LOW)
+    logger.info(f"LED initialized on BCM pin {LED_PIN}")
 
     # session state
     in_session    = False
@@ -172,7 +172,7 @@ def main():
         while True:
             vib = read_vibration(bus)
 
-            # SESSION START?
+            # SESJONSSTART?
             if not in_session:
                 if vib > IDLE_THRESHOLD:
                     in_session = True
@@ -182,7 +182,7 @@ def main():
                     last_label = None
                     idx = 0
                     start_time = time.time()
-                    # open DB session
+                    # åpne DB‐session
                     conn = init_db()
                     cur  = conn.cursor()
                     cur.execute("INSERT INTO sessions(start_ts) VALUES(datetime('now'))")
@@ -193,24 +193,24 @@ def main():
                     time.sleep(SENSOR_INTERVAL)
                     continue
 
-            # INSIDE SESSION: collect
+            # INNE I SESSION: samle data
             vib_buf.append(vib)
             if len(vib_buf) == WINDOW_SIZE:
                 rms, ent, cen = extract_features(vib_buf)
-                label = clf.predict([[rms,ent,cen]])[0]
+                label = clf.predict([[rms, ent, cen]])[0]
                 logger.debug(f"Window {idx}: rms={rms:.3f}, ent={ent:.3f}, cen={cen:.1f} → {label}")
 
-                # detect change + buzz
+                # oppdag skifte + blink LED
                 if last_label and label != last_label:
                     change_points.append((idx, f"{last_label}→{label}"))
-                    GPIO.output(BUZZER_PIN, GPIO.HIGH)
+                    # blink LED i 0.2 sek
+                    GPIO.output(LED_PIN, GPIO.HIGH)
                     time.sleep(0.2)
-                    GPIO.output(BUZZER_PIN, GPIO.LOW)
+                    GPIO.output(LED_PIN, GPIO.LOW)
                     logger.info(f"Material change: {last_label}→{label} @ window {idx}")
 
                 last_label = label
 
-                # only store after first change
                 if change_points:
                     conn.execute(
                      "INSERT INTO features(session_id,window_idx,rms,entropy,centroid,label) VALUES(?,?,?,?,?,?)",
@@ -218,44 +218,31 @@ def main():
                     )
                     conn.commit()
 
-                # update live plot
-                xs = list(range(idx+1))
-                for ax, data in ((ax_r, [f[3] for f in conn.execute(
-                         "SELECT window_idx,rms,entropy,centroid,label FROM features WHERE session_id=? ORDER BY window_idx",
-                         (session_id,))]),
-                                 (ax_e, [f[4] for f in conn.execute(
-                         "SELECT window_idx,rms,entropy,centroid,label FROM features WHERE session_id=? ORDER BY window_idx",
-                         (session_id,))]),
-                                 (ax_c, [f[5] for f in conn.execute(
-                         "SELECT window_idx,rms,entropy,centroid,label FROM features WHERE session_id=? ORDER BY window_idx",
-                         (session_id,))])):
-                    # simpler approach: just keep local lists
-                    pass
-
-                # we’ll use local lists instead to avoid repeated DB fetch:
                 if idx == 0:
                     rms_list, ent_list, cen_list = [], [], []
                 rms_list.append(rms)
                 ent_list.append(ent)
                 cen_list.append(cen)
 
-                for ax, data in ((ax_r,rms_list),(ax_e,ent_list),(ax_c,cen_list)):
+                xs = list(range(idx+1))
+                for ax, data in ((ax_r, rms_list), (ax_e, ent_list), (ax_c, cen_list)):
                     ax.clear()
                     ax.plot(xs, data, '-o')
-                    for cp,txt in change_points:
+                    for cp, txt in change_points:
                         ax.axvline(cp, color='red', ls='--')
                         ax.text(cp, max(data)*1.02, txt,
                                 ha='center', va='bottom',
-                                bbox=dict(facecolor='white',alpha=0.7))
-                fig.canvas.draw(); fig.canvas.flush_events()
+                                bbox=dict(facecolor='white', alpha=0.7))
+                fig.canvas.draw()
+                fig.canvas.flush_events()
                 idx += 1
 
-            # SESSION END?
+
             if vib < IDLE_THRESHOLD:
                 if idle_start is None:
                     idle_start = time.time()
-                elif time.time()-idle_start >= IDLE_WINDOW_SECS:
-                    # finalize
+                elif time.time() - idle_start >= IDLE_WINDOW_SECS:
+                    # finaliser
                     conn.execute("UPDATE sessions SET end_ts=datetime('now') WHERE session_id=?", (session_id,))
                     conn.commit()
                     snapshot = os.path.join(SNAPSHOT_DIR, f"session_{session_id}_live.png")
@@ -263,7 +250,7 @@ def main():
                     logger.info(f"Session {session_id} ended; snapshot → {snapshot}")
                     conn.execute(
                       "UPDATE sessions SET snapshot_path=?,snapshot_ts=datetime('now') WHERE session_id=?",
-                      (snapshot,session_id))
+                      (snapshot, session_id))
                     conn.commit()
                     conn.close()
                     in_session = False
