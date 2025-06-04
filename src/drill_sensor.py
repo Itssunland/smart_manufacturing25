@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""
-drill_sensor_led.py
 
-Automatically start/stop sessions on drill vibration,
-classify material changes with RF, blink LED on change,
-log to file, store to SQLite, and save a 3-panel plot.
-"""
 import os
 import math
 import time
@@ -19,6 +13,19 @@ from datetime import datetime
 import numpy as np
 import matplotlib.pyplot as plt
 import RPi.GPIO as GPIO
+import paho.mqtt.client as mqtt
+
+# … (rest av eksport og initialisering)
+MQTT_BROKER = "broker.emqx.io"
+MQTT_TOPIC  = "drill/data"
+mqtt_client = mqtt.Client(f"pi-publisher-{random.randint(0,999)}")
+mqtt_client.connect(MQTT_BROKER, 1883, 60)
+# …
+# inni loop hvor du har rms, ent, cen:
+payload = json.dumps({"rms": rms})
+mqtt_client.publish(MQTT_TOPIC, payload)
+
+
 
 # ——— PATH & LOGGING SETUP ———
 BASE_DIR     = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -172,7 +179,7 @@ def main():
         while True:
             vib = read_vibration(bus)
 
-            # SESJONSSTART?
+
             if not in_session:
                 if vib > IDLE_THRESHOLD:
                     in_session = True
@@ -182,7 +189,7 @@ def main():
                     last_label = None
                     idx = 0
                     start_time = time.time()
-                    # åpne DB‐session
+
                     conn = init_db()
                     cur  = conn.cursor()
                     cur.execute("INSERT INTO sessions(start_ts) VALUES(datetime('now'))")
@@ -193,17 +200,15 @@ def main():
                     time.sleep(SENSOR_INTERVAL)
                     continue
 
-            # INNE I SESSION: samle data
             vib_buf.append(vib)
             if len(vib_buf) == WINDOW_SIZE:
                 rms, ent, cen = extract_features(vib_buf)
                 label = clf.predict([[rms, ent, cen]])[0]
                 logger.debug(f"Window {idx}: rms={rms:.3f}, ent={ent:.3f}, cen={cen:.1f} → {label}")
 
-                # oppdag skifte + blink LED
                 if last_label and label != last_label:
                     change_points.append((idx, f"{last_label}→{label}"))
-                    # blink LED i 0.2 sek
+
                     GPIO.output(LED_PIN, GPIO.HIGH)
                     time.sleep(0.2)
                     GPIO.output(LED_PIN, GPIO.LOW)
