@@ -20,68 +20,29 @@ This project captures drilling vibration data with a Raspberry Pi + MPU-6050 acc
 
 ---
 
-## Repo Structure
-
-```text
-smart_manufacturing25/
-├── data/  
-│   └── drill_sim_sessions.db       # SQLite DB for live sessions
-├── models/  
-│   └── rf_material_clf.pkl         # Pretrained RandomForest model
-├── snapshots/                      # Auto-saved PNGs per session
-├── src/  
-│   ├── drill_sim.py                # Live sensor acquisition & plotting
-│   ├── simulate_data.py            # Simulate & populate database
-│   ├── collect_data.py             # (Optional) manual data collection
-│   └── train_rf.py                 # Train RF model on `data/training_data.db`
-├── requirements.txt                # Python dependencies
-├── .gitignore                      
-└── README.md
-
 ## Material Classification
 
+[](figures/thresholds.png)
 Classification thresholds are calibrated per material:
 
-| Material | RMS Threshold | Entropy Threshold | Centroid Threshold (Hz) |
-| -------- | ------------- | ----------------- | ----------------------- |
-| Wood     | 0.5           | 0.8               | 200                     |
-| Plastic  | 1.0           | 0.9               | 400                     |
-| Rubber   | 0.3           | 0.95              | 150                     |
-| Brick    | 1.5           | 0.7               | 800                     |
+| Material | RMS Threshold   | Entropy Threshold | Centroid Threshold (Hz) |
+| -------- | -------------   | ----------------- | ----------------------- |
+| Plywood  | < 0.9564        | > 0.8995          | > 206.0871              |
+| Gypsum   | 0.9564 – 1.1044 | 0.8856 – 0.8995   | 204.3948 – 206.0871     |
+| Marble   | > 1.1044        | < 0.8856          | < 204.3948              |
 
-
-1. Compute the three features for each window of sensor data.
-2. Compare to thresholds in order: Wood → Plastic → Rubber → Brick.
-3. Assign the first material whose all thresholds (`rms <`, `entropy <`, `centroid <`) are met.
-
-## Usage
-
-1. Install dependencies:
-
-   ```bash
-   pip install smbus2 numpy matplotlib scikit-learn paho-mqtt
-   ```
-2. Run simulation or real sensor mode:
-
-   ```bash
-   python drill_sim.py
-   ```
-3. Review live plot, transitions snapshots, and final visualization.
-
-## Output
-
-* **SQLite Database (`drill_sessions.db`)**:
-
-  * `sessions`: start/end timestamps
-  * `features`: per-window RMS, entropy, centroid
-  * `transitions`: detected material changes and snapshot image paths
-* **Snapshots Folder**: PNG images showing the exact transition point in RMS curve.
-
-## File explination
-rf_syntetic_data/simulate_data.py -> simulate trainingdata
-rf_syntetic_data/train_RF -> training random forest model
---> rf_material_cld.pkl -> trained model
-drill_sim.py -> simulates test and uses trained model
+1. Compute the three features for each window of sensor data (RMS, Spectral Entropy, Spectral Centroid).
+2. Compare to thresholds in order: Plywood → Gypsum → Marble.
+3. Assign the first material whose three threshold‐conditions are all true:
+   - **Plywood** if  
+     • rms < 0.9564  
+     • entropy > 0.8995  
+     • centroid > 206.0871  
+   - **Gypsum** if (not Plywood) and  
+     • rms < 1.1044  
+     • entropy > 0.8856  
+     • centroid > 204.3948  
+   - **Marble** otherwise.
 
 ---
 

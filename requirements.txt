@@ -2,5 +2,7 @@ numpy
 matplotlib
 scikit-learn
 smbus2 
+math
 paho-mqtt #if MQTT
 ruptures #if PELT
+pandas
