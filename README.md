@@ -22,7 +22,7 @@ This project captures drilling vibration data with a Raspberry Pi + MPU-6050 acc
 
 ## Material Classification
 
-[](figures/thresholds.png)
+![](figures/thresholds.png)
 Classification thresholds are calibrated per material:
 
 | Material | RMS Threshold   | Entropy Threshold | Centroid Threshold (Hz) |
@@ -45,5 +45,12 @@ Classification thresholds are calibrated per material:
    - **Marble** otherwise.
 
 ---
+## Performance
+![](figures/gb.pref.png)
 
+![](figures/rf.pref.png)
+
+![](figures/mpl.pref.png)
+
+---
 *Erlend Dragland, 2025*
