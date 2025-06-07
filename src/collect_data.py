@@ -15,7 +15,7 @@ SENSOR_INTERVAL = 1.0 / SAMPLE_RATE
 DB_FILE         = "data/training_data.db"
 
 # Materials you can choose from:
-LABELS = ['Plywood', 'Marble', 'Gypsum', 'Brick']
+LABELS = ['Plywood', 'Marble', 'Gypsum']
 # ↑ If you want to rename or add labels, do it here.
 
 # ——— I²C / MPU-6050 setup (same as in drill_sim.py) ———
