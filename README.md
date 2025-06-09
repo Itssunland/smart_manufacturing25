@@ -2,6 +2,7 @@
 
 This project captures drilling vibration data with a Raspberry Pi + MPU-6050 accelerometer, extracts three signal features, and classifies the drilled material in real time using a pretrained Random Forest model.
 
+![](figures/flowchart.png)
 ---
 
 ## Features
