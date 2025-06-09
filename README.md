@@ -22,7 +22,7 @@ This project captures drilling vibration data with a Raspberry Pi + MPU-6050 acc
 
 ## Material Classification
 
-![](figures/mat_thres.png)
+![](figures/mat_nothres.png)
 Classification thresholds are calibrated per material:
 
 | Material  | RMS Threshold   | Entropy Threshold | Centroid Threshold (Hz) |
@@ -52,7 +52,7 @@ Classification thresholds are calibrated per material:
 
 ![](figures/pref_rf.png)
 
-![](figures/mpl.pref_mpl.png)
+![](figures/pref_mpl.png)
 
 ---
 *Erlend Dragland, 2025*
