@@ -26,7 +26,6 @@ from sklearn.pipeline import Pipeline
 from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import classification_report, confusion_matrix
 
-# Paths (relative to project root)
 BASE_DIR    = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 DATA_DIR    = os.path.join(BASE_DIR, 'data')
 MODELS_DIR  = os.path.join(BASE_DIR, 'models')
@@ -61,20 +60,16 @@ def main():
     X, y = load_data(DB_FILE)
     print(f"Total samples: {len(y)}; classes: {np.unique(y)}")
 
-    # Encode labels fra strenger til heltall
-    le = LabelEncoder()
-    y_enc = le.fit_transform(y)  # f.eks. Gypsum→0, Marble→1, Plywood→2
 
-    # Split 70% train, 30% test, stratified på de numeriske etikettene
+    le = LabelEncoder()
+    y_enc = le.fit_transform(y)  
     X_train, X_test, y_train_enc, y_test_enc = train_test_split(
         X, y_enc, test_size=0.3, stratify=y_enc, random_state=42
     )
     print(f"Train size: {len(y_train_enc)}, Test size: {len(y_test_enc)}")
 
-    # StratifiedKFold for CV
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
-    # Prøv både StandardScaler og RobustScaler
     scalers = {
         'standard': StandardScaler(),
         'robust':   RobustScaler()
@@ -104,7 +99,7 @@ def main():
              ))
         ])
 
-        # Utvidet hyperparameter‐grid
+
         param_grid = {
             'mlp__hidden_layer_sizes': [(50,), (100,), (50, 50), (100, 50), (50, 50, 25)],
             'mlp__activation':         ['relu', 'tanh'],
@@ -125,7 +120,6 @@ def main():
         print("Best params:", grid.best_params_)
         print(f"Train F1-macro: {grid.best_score_:.4f}")
 
-        # Evaluer på test‐settet (dekod tilbake til strenger)
         y_pred_enc = grid.predict(X_test)
         y_pred = le.inverse_transform(y_pred_enc)
         y_true = le.inverse_transform(y_test_enc)
@@ -135,7 +129,6 @@ def main():
         print("Confusion matrix:")
         print(confusion_matrix(y_true, y_pred))
 
-        # Oppdater best hvis denne kombinasjonen er bedre
         if grid.best_score_ > best_overall['score']:
             best_overall.update({
                 'score': grid.best_score_,
@@ -144,7 +137,6 @@ def main():
                 'model': grid.best_estimator_
             })
 
-    # Lagre beste modell
     print("\n=== Beste overall ===")
     print("Scaler:", best_overall['scaler'])
     print("Params:", best_overall['params'])
