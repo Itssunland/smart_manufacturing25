@@ -16,11 +16,12 @@ WiFiClient   wifiClient;
 PubSubClient mqtt(wifiClient);
 
 MPU6050 imu;
-const int WINDOW_SIZE = 256;
+const int WINDOW_SIZE = 256; 
 float buf[WINDOW_SIZE];
 int   idx = 0;
 
 #define LED_PIN      2
+#define VIB_THRESHOLD 0.2 //m/s²
 
 int changeCount = 0;
 
@@ -90,11 +91,14 @@ void setup() {
   digitalWrite(LED_PIN, LOW);
 }
 
+
+
 void loop() {
   if (WiFi.status() != WL_CONNECTED) connectSecureWiFi();
   if (!mqtt.connected()) reconnectMQTT();
   mqtt.loop();
 
+  // Les rå akselerasjon og regn ut vibrasjon
   int16_t ax, ay, az;
   imu.getAcceleration(&ax, &ay, &az);
   float vib = sqrt(
@@ -102,15 +106,26 @@ void loop() {
     sq(ay / 16384.0 * 9.81F) +
     sq(az / 16384.0 * 9.81F)
   );
+
+  if (vib < VIB_THRESHOLD) {
+    idx = 0;
+    return;
+  }
+
   buf[idx++] = vib;
 
   if (idx >= WINDOW_SIZE) {
     idx = 0;
-    float rms = computeRMS();
-    char msg[64];
-    snprintf(msg, sizeof(msg), "{\"rms\":%.3f}", rms);
-    mqtt.publish(DATA_TOPIC, msg);
+
+    String payload = "[";
+    for (int i = 0; i < WINDOW_SIZE; i++) {
+      payload += String(buf[i], 4);
+      if (i < WINDOW_SIZE - 1) payload += ",";
+    }
+    payload += "]";
+    mqtt.publish(DATA_TOPIC, payload.c_str());
   }
 
   delay(1);
 }
+

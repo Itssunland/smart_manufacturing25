@@ -12,18 +12,16 @@ from smbus2 import SMBus
 WINDOW_SIZE     = 256
 SAMPLE_RATE     = 1000               # Hz
 SENSOR_INTERVAL = 1.0 / SAMPLE_RATE
-DB_FILE         = "data/training_data.db"
+DB_FILE         = "data/drilldata.db"
 
-# Materials you can choose from:
-LABELS = ['Plywood', 'Marble', 'Gypsum']
-# ↑ If you want to rename or add labels, do it here.
 
-# ——— I²C / MPU-6050 setup (same as in drill_sim.py) ———
+LABELS = ['Plywood', 'Marble', 'Gypsum', 'Styrofoam']
+
 I2C_ADDR = 0x68
 
 def init_sensor():
     bus = SMBus(1)
-    # Wake up MPU-6050 by writing 0 to register 0x6B
+
     bus.write_byte_data(I2C_ADDR, 0x6B, 0)
     time.sleep(0.1)
     return bus
